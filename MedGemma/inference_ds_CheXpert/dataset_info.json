@@ -1,0 +1,58 @@
+{
+  "citation": "",
+  "description": "",
+  "features": {
+    "question": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "image_path": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "subject_id": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "study_id": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "view_id": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "prompt_type": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "messages": {
+      "feature": {
+        "content": {
+          "feature": {
+            "image": {
+              "dtype": "string",
+              "_type": "Value"
+            },
+            "text": {
+              "dtype": "string",
+              "_type": "Value"
+            },
+            "type": {
+              "dtype": "string",
+              "_type": "Value"
+            }
+          },
+          "_type": "List"
+        },
+        "role": {
+          "dtype": "string",
+          "_type": "Value"
+        }
+      },
+      "_type": "List"
+    }
+  },
+  "homepage": "",
+  "license": ""
+}

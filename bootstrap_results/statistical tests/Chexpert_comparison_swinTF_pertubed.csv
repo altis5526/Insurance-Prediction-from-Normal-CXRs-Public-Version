@@ -1,0 +1,2 @@
+experiment_A,experiment_B,n_pairs,mean_delta,std_delta,shapiro_p,delta_normal,t_stat,t_p,t_significant,wilcoxon_stat,wilcoxon_p,wilcoxon_significant,recommended_test
+“swinTF”,“swinTF_perturbed”,20,0.097187,0.038138,0.414609,True,11.107756,0.0,True,0.0,2e-06,True,t-test

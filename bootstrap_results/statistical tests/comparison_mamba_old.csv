@@ -1,0 +1,2 @@
+experiment_A,experiment_B,n_pairs,mean_delta,std_delta,shapiro_p,delta_normal,t_stat,t_p,t_significant,wilcoxon_stat,wilcoxon_p,wilcoxon_significant,recommended_test
+“mamba”,“mamba_old”,20,-0.137588,0.030989,0.756286,True,-19.35294,0.0,True,0.0,2e-06,True,t-test

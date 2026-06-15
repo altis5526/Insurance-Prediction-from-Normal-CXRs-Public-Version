@@ -1,0 +1,548 @@
+MedGemma Experiments Checklist
+===============================
+Dataset: mimic-cxr-gemma (MedGemma-refined, normal CXRs only)
+Submitted: 2026-03-02 (1st attempt failed -- protobuf conflict)
+Resubmitted: 2026-03-03 (fixed with PYTHONNOUSERSITE=1)
+GPU: L40S on mit_preemptable (max 2-day time limit)
+Last updated: 2026-03-20 ~14:00
+
+Chi-Yu handles: exp0, exp0-2
+We handle:      exp2, exp3, exp3-1, exp3-2, exp4, exp4-1, exp4-2
+
+=== STORAGE POLICY ===
+Code repo:   /orcd/pool/005/sebasmos/code/Insurance-Project-Journal-version-  (git)
+Weights:     /orcd/pool/006/lceli_shared/weights/insurance_paper_weights/
+  Medgemma subdirs: exp2_medgemma/,
+                    exp3_medgemma/, exp3-1_medgemma/, exp3-2_medgemma/,
+                    exp4_medgemma/, exp4-1_medgemma/, exp4-2_medgemma/
+Scratch (temp): /home/sebasmos/orcd/scratch/JAMA_codes_medgemma/  (training workspace)
+  Weights auto-collected from scratch -> insurance_paper_weights by SLURM scripts.
+  Bootstrap scripts read from insurance_paper_weights (not scratch).
+Nothing should be stored elsewhere.
+
+=== ISSUE LOG ===
+2026-03-03: 1st run (jobs 9937954-9937962) failed instantly (<1 min each).
+  Root cause: protobuf 6.33.5 was pip-installed to ~/.local/ on Feb 21,
+  which shadows the conda env's protobuf 3.20.3 and breaks tfrecord import.
+  Fix: added "export PYTHONNOUSERSITE=1" to all SLURM scripts.
+  Resubmitted as jobs 9984764-9984772.
+
+2026-03-04: Jobs 9984764-9984767 hit 18h TIMEOUT (or 1d for SwinTF).
+  Each job trains combos sequentially, so only partial combos completed.
+  Rerun jobs submitted: 10040216 (exp3 Mamba), 10040217 (exp3-1 DenseNet),
+    10040218 (exp3-2 SwinTF), 10040219 (exp4 Mamba highpass).
+
+2026-03-05: Job 9984768 (exp4 Mamba lowpass) COMPLETED all 8/8 freqs.
+  Job 9984769 (exp4-1 SwinTF highpass) TIMEOUT after 1d -- 5/8 done, need 100,200,400Hz.
+  Job 9984770 (exp4-1 SwinTF lowpass) TIMEOUT at 24h -- 5/8 done.
+  Submitted 3 additional rerun jobs:
+    10077723 (exp4-1 SwinTF highpass), 10077725 (exp4-1 SwinTF lowpass),
+    10077726 (exp4-2 DenseNet lowpass -- preemptive, may timeout).
+  Job 10040217 (exp3-1 DenseNet rerun) COMPLETED 4h21m (agerace + sexagerace done, but missed sex/age/race).
+  Job 9984771 (exp4-2 DenseNet highpass) COMPLETED all 8/8 freqs.
+  Job 9984772 (exp4-2 DenseNet lowpass) COMPLETED all 8/8 freqs.
+
+2026-03-06 (early): 4 jobs running, 2 pending. exp3-1 DenseNet needed NEW rerun for
+  sex, age, race (3 combos) -- job 10040217 finished but missed them.
+  Root cause: run_exp3-1.py was missing --root_dir for single combos (sex,age,race),
+    so they defaulted to /home/sebasmos/orcd/pool/code/JAMA_codes/ instead of scratch.
+    Also missing skip logic for those combos. Fixed run_exp3-1.py and resubmitted
+    as job 10097527.
+  exp4-1 SwinTF LP rerun (10077725) resumed 100Hz from checkpoint, completed it
+    (AUC=0.6358), now training 200Hz. exp4 Mamba HP rerun (10040219) completed
+    50Hz (0.6264) + 100Hz (0.6144), now training 200Hz.
+
+2026-03-06 (mid): Major progress -- exp4 fully done!
+  Job 10040219 (exp4 Mamba HP rerun) COMPLETED 11h46m -- all 8/8 done.
+    200Hz (0.6103), 400Hz (0.6102).
+  Job 10077723 (exp4-1 SwinTF HP rerun) COMPLETED 4h53m -- all 8/8 done.
+    100Hz (0.4824), 200Hz (0.5087), 400Hz (0.5024).
+  Job 10077725 (exp4-1 SwinTF LP rerun) COMPLETED 13h -- all 8/8 done.
+    200Hz (0.6200), 400Hz (0.6154).
+  Job 10077726 (exp4-2 DenseNet LP rerun) COMPLETED 1s -- no-op, skip logic.
+  Job 10040216 (exp3 Mamba rerun) TIMEOUT at 18h -- agerace COMPLETED (0.6593),
+    sexagerace training COMPLETED but TEST EVAL INTERRUPTED by timeout.
+    Weight exists in scratch, needs test eval + collection.
+  Job 10040218 (exp3-2 SwinTF rerun) was RUNNING 22h / 24h limit.
+    sexage COMPLETED (0.6321). sexrace RUNNING ep 14/200. Will timeout before
+    finishing sexrace. agerace + sexagerace not started.
+
+2026-03-06 (later): Cleanup and resubmission.
+  Cancelled job 10040218 (exp3-2 SwinTF) -- sexrace at ep14/200, can't finish in 2h.
+  Added skip logic for single combos (sex,age,race) to run_exp3.py and run_exp3-2.py
+    so reruns skip already-completed combos.
+  Increased time limits: mg_exp3_mamba.sh 18h->2d, mg_exp3-2_swinTF.sh 24h->2d.
+  Submitted job 10118648: mg_exp3_test (test-eval-only for exp3 Mamba sexagerace).
+  Submitted job 10118649: mg_exp3-2_sw (fresh exp3-2 SwinTF rerun, 2-day limit,
+    will skip sex/age/race/sexage, train sexrace/agerace/sexagerace).
+
+2026-03-07 (early): exp3 Mamba fully done, exp3-2 SwinTF almost done.
+  Job 10118648 (exp3 Mamba sexagerace test eval) COMPLETED in 52s.
+    TEST AUC: 0.6497. exp3 Mamba now fully complete (7/7).
+  Job 10118649 (exp3-2 SwinTF rerun) RUNNING ~15h:
+    sexrace COMPLETED -- TEST AUC: 0.6249.
+    agerace COMPLETED -- TEST AUC: 0.6095.
+    sexagerace TRAINING ep 36/200, best AUC so far 0.6022. ~27h needed, ~33h remaining.
+
+2026-03-07 (~09:15): exp3-2 SwinTF sexagerace progressing well.
+  Job 10118649 RUNNING ~19h. sexagerace at ep 58/200, best AUC 0.6336.
+  ~10 min/epoch, ~142 epochs remaining (~24h). ~29h left in 2-day limit -- on track.
+
+2026-03-07 (~10:30): exp3-2 SwinTF sexagerace still training.
+  Job 10118649 RUNNING ~19h. sexagerace at ep 48/200, AUC 0.6218.
+  Added exp2 medgemma scripts: run_exp2.py (updated with --root_dir, skip logic,
+    all 8 resolutions), mg_exp2_mamba.sh, run_exp2_bootstrap_medgemma.py,
+    mg_exp2_bootstrap_mamba.sh.
+  Fixed train_insurance_fullimgsize_mamba.py cuda.set_device(1)->0 for SLURM single-GPU.
+  Submitted exp2 Mamba training: job 10161337 (PENDING).
+
+2026-03-07 (~11:15): exp3-2 SwinTF COMPLETED! exp2 Mamba partial failures.
+  Job 10118649 (exp3-2 SwinTF) COMPLETED after 20h31m.
+    sexagerace COMPLETED ep 69/200 (early stop). TEST AUC: 0.6455.
+    All 7/7 weights auto-collected to exp3-2_medgemma/.
+    exp3 fully done (21/21 models).
+  Job 10161337 (exp2 Mamba) RUNNING ~2h:
+    Resolutions 2,4,7,14,28 FAILED -- MedMamba patch_embed kernel (4x4) and
+      PatchMerging layers cannot handle small spatial dims.
+      res2: "Kernel size (4x4) > input (2x2)".
+      res4,7,14,28: "Sizes of tensors must match" in PatchMerging downsample.
+    Resolution 56: COMPLETED (trained + tested, weight in scratch).
+    Resolution 112: TRAINING ep 7/200, ~5 min/epoch.
+    Resolution 224: not started yet.
+    Only 3/8 resolutions viable for MedMamba (56, 112, 224).
+
+2026-03-07 (~13:24): exp2 Mamba COMPLETED! exp3-2 bootstrap COMPLETED!
+  Job 10161337 (exp2 Mamba) COMPLETED after 3h38m.
+    res 56: AUC 0.6172. res 112: AUC 0.6253. res 224: AUC 0.6104.
+    res 2,4,7,14,28: FAILED (architecture incompatible, expected).
+    3/3 viable weights auto-collected to exp2_medgemma/.
+    ALL TRAINING COMPLETE.
+  Job 10168498 (exp3-2 SwinTF bootstrap) COMPLETED after 6m58s.
+    All 7/7 combos bootstrapped. 14 CSVs in bootstrap_results/medgemma_exp3/.
+    exp3 bootstrap fully done (3/3 models, 21/21 evals).
+
+2026-03-08: Investigation into exp2 small-resolution failures.
+  Root cause: train_insurance_fullimgsize_mamba.py (line 146-147) creates datasets
+    with MIMIC_raw(path, resize=args.resize) but does NOT pass upscale_to=448.
+    This feeds tiny images (e.g. 2x2, 4x4) directly to MedMamba, which crashes
+    because PatchEmbed2D (MedMamba/MedMamba.py, line 209) uses a 4x4 Conv2d kernel
+    and PatchMerging2D (lines 236-262) halves spatial dims at each of 3 stages.
+  The README documents exp2 as a two-step resize: "Images are resized DOWN to
+    the target resolution then UP to 448x448 before feeding to the model."
+    bootstrap_evaluate.py (line 486-487) correctly implements this with upscale_to=448.
+    But the training script is missing it -- both in our repo AND in Chi-Yu's latest
+    push (https://github.com/altis5526/Insurance-Project-Journal-version-.git).
+  The original non-MedGemma exp2 weights (exp2/mamba_2.pt through mamba_224.pt) DO
+    exist and produce valid bootstrap results for all 8 resolutions. Chi-Yu must have
+    trained them with a locally modified script that included upscale_to=448, but that
+    version was never committed.
+  Fix: add upscale_to=448 to MIMIC_raw() calls in train_insurance_fullimgsize_mamba.py.
+  Status: CONFIRMED by Chi-Yu (2026-03-08). He used upscale_to=448 in his original runs.
+  Fix applied: added upscale_to=448 to train_insurance_fullimgsize_mamba.py (line 146-148).
+  Resubmitted exp2 Mamba: job 10209656 (will skip res 56,112,224 already done, train 2,4,7,14,28).
+
+2026-03-08 (~11:40): exp2 Mamba rerun progressing -- res 2 done, res 4 training.
+  Job 10209656 RUNNING ~5h16m on node3208.
+  res 2: COMPLETED 38 epochs (early stop). TEST AUC: 0.5540.
+  res 4: TRAINING epoch 15/100, best AUC 0.5896 (ep 13). ~5.5 min/epoch.
+  res 7,14,28: pending.
+  Weights in scratch: res 2 + res 4 (aucbest saved during training).
+
+2026-03-08 (~23:54): exp2 Mamba rerun COMPLETED! ALL TRAINING DONE.
+  Job 10209656 COMPLETED after 17h33m. All 5 remaining resolutions done.
+    res  2: TEST AUC 0.5540.  res  4: TEST AUC 0.6053.
+    res  7: TEST AUC 0.6061.  res 14: TEST AUC 0.6225.
+    res 28: TEST AUC 0.6368.
+  All 8/8 weights auto-collected to exp2_medgemma/.
+
+2026-03-09: Submitted exp2 Mamba bootstrap: job 10284084.
+
+2026-03-14: exp2-1 DenseNet training started.
+  Job 10538978 (mg_exp2-1_dn) started 13:25 on node.
+  All 8 resolutions training sequentially.
+
+2026-03-15 (02:31): exp2-1 DenseNet training COMPLETED!
+  Job 10538978 COMPLETED after 13h06m. All 8/8 resolutions done.
+    res  2: TEST AUC 0.5538.  res  4: TEST AUC 0.6014.
+    res  7: TEST AUC 0.6038.  res 14: TEST AUC 0.6378.
+    res 28: TEST AUC 0.6469.  res 56: TEST AUC 0.6370.
+    res112: TEST AUC 0.6639.  res224: TEST AUC 0.6801.
+  All 8/8 weights auto-collected to exp2-1_medgemma/.
+
+2026-03-15 (~10:00): Status check.
+  exp2-2 SwinTF (job 10538979) STALLED -- PENDING "ReqNodeNotAvail, Reserved for maintenance".
+  Updated bootstrap script (run_exp2_bootstrap_medgemma.py) to support densenet/swinTF
+    and corrected weight path to /orcd/pool/006/lceli_shared/weights/insurance_paper_weights/.
+  Created SLURM bootstrap scripts: mg_exp2_bootstrap_densenet.sh, mg_exp2_bootstrap_swinTF.sh.
+  Submitted exp2-1 DenseNet bootstrap: job 10561343.
+  Cancelled stalled exp2-2 SwinTF job 10538979 (maintenance hold).
+  Switched mg_exp2_swinTF.sh to mit_normal_gpu (6h limit, skip logic handles partial runs).
+  Resubmitted exp2-2 SwinTF: job 10561425 on mit_normal_gpu.
+
+2026-03-15 (~16:08): exp2-1 DenseNet bootstrap COMPLETED! exp2-2 SwinTF FAILED.
+  Job 10561343 (exp2-1 DenseNet bootstrap) COMPLETED 6m26s. 16 CSVs in medgemma_exp2/.
+  Job 10561425 (exp2-2 SwinTF) FAILED in 40s -- all 7 resolutions crashed.
+    Root cause: train_insurance_fullimgsize_swintransformer_csv.py had cuda.set_device(1),
+    same bug as mamba. Only 1 GPU visible on SLURM, so device 1 doesn't exist.
+    Fix: set_device(1)->0 in train_insurance_fullimgsize_swintransformer_csv.py.
+
+2026-03-16 (~11:00): Resubmitted exp2-2 SwinTF after GPU fix.
+  Job 10577589 on mit_normal_gpu (6h limit). Started res=4 training from scratch.
+  CANCELLED after 10min (manual cancel to switch strategy).
+
+2026-03-16 (~12:00): Resubmitted exp2-2 SwinTF: job 10581029 on mit_normal_gpu (6h).
+  res=4: Trained from scratch to epoch 32, best AUC 0.5608 (ep 22). TIMEOUT at 6h.
+
+2026-03-16 (~19:28): Resubmitted exp2-2 SwinTF: job 10597452 on mit_normal_gpu (4h).
+  res=4: Resumed from epoch 32 checkpoint. Still training res=7 at ep 11. TIMEOUT at 4h.
+
+2026-03-17 (~17:22): Switched exp2-2 SwinTF to mit_preemptable (2-day limit): job 10602510.
+  res  4: Resumed from ep 32 checkpoint, early stop at ep 33. TEST AUC: 0.5577.
+  res  7: Resumed from ep 12 checkpoint, early stop at ep 47. TEST AUC: 0.5954.
+  res 14: Started fresh, early stop at ep 45. TEST AUC: 0.6016.
+  res 28: Started fresh, TRAINING at ep 59/100, best AUC 0.6485 (ep 51).
+  res 56, 112, 224: pending.
+  ~31h remaining in 2-day limit. On track to finish all 7 resolutions.
+
+2026-03-18 (~10:30): exp2-2 SwinTF job 10602510 RUNNING ~17h on node4305.
+  res 4,7,14: DONE (trained + tested). res 28: epoch 59, best AUC 0.6485.
+  Bootstrap job 10620807 queued with dependency on 10602510.
+
+2026-03-19 (~08:00): exp2-2 SwinTF job 10602510 RUNNING ~38h on node3302 (requeued from node4305).
+  res 4,7,14,28,56: DONE (trained + tested). Weights saved to scratch.
+  res 112: TRAINING epoch 17, best AUC 0.6069 (ep 16). Loss trending down (~0.670).
+  res 224: pending.
+  ~10h remaining in 2-day limit. Should finish if res112 early-stops and res224 is fast.
+
+2026-03-19 (~18:00): exp2-2 SwinTF job 10602510 TIMEOUT after exactly 2 days.
+  res 4,7,14,28,56: DONE (trained + tested). All 5 test AUCs confirmed.
+  res 112: TIMED OUT at epoch 59/100, best validation AUC 0.6540 (ep 58).
+    Checkpoint saved in scratch. NO test eval done.
+  res 224: NOT started.
+  Bootstrap job 10620807 CANCELLED (dependency on timed-out training job).
+  Need resubmission: res 112 (resume from ep 59 checkpoint) + res 224 (from scratch).
+
+2026-03-20 (~01:10): exp2-2 SwinTF job 10707279 RUNNING ~7h on node1705.
+  Skipped res 4,7,14,28,56 (all COMPLETED).
+  res 112: Resumed from ep 60 checkpoint, COMPLETED (early stop). TEST AUC: 0.6230.
+  res 224: TRAINING from scratch, at epoch 22. ~41h remaining in 2d limit -- on track.
+
+2026-03-20 (~06:24): exp2-2 SwinTF COMPLETED! ALL MEDGEMMA TRAINING DONE!
+  Job 10707279 COMPLETED after 10h25m. All 7/7 resolutions done.
+    res 224: early stop ep 39/200. TEST AUC: 0.6155.
+    All 7 weights auto-collected to exp2-2_medgemma/.
+  Job 10707280 (exp2-2 SwinTF bootstrap) COMPLETED after 10m50s.
+    All 7 resolutions bootstrapped. 14 CSVs in bootstrap_results/medgemma_exp2/.
+  ALL 92/92 training models complete. ALL 12/12 bootstrap jobs complete.
+
+=== TRAINING ===
+
+Exp 2 -- Resolution (all models, upscale_to=448 fix applied)
++----------+----------+---------+------------+---------+----------------------------------------+
+| Exp      | Model    | Old Job | Rerun      | Status  | Detail                                 |
++----------+----------+---------+------------+---------+----------------------------------------+
+| exp2     | Mamba    | 10161337| 10209656   | [X]     | COMPLETED all 8/8. Weights collected.   |
+|          |          |(3 done) | (COMPLETD) |         | 17h33m. All resolutions done.            |
+| exp2-1   | DenseNet | --      | 10538978   | [X]     | COMPLETED all 8/8 in 13h06m.           |
+|          |          |         |(COMPLETD)  |         | Weights collected to exp2-1_medgemma/.  |
+| exp2-2   | SwinTF   | 10602510| 10707279   | [X]     | COMPLETED 10h25m. All 7/7 done.        |
+|          |          |(TIMEOUT)|(COMPLETD)  |         | Weights collected to exp2-2_medgemma/. |
++----------+----------+---------+------------+---------+----------------------------------------+
+  Script: slurm/medgemma/mg_exp2_mamba.sh
+  Python: run_exp2.py (--root_dir, skip logic, all 8 resolutions)
+  Weights saved to scratch: $ROOT/{res}_mg_exp2/mamba/Rand123/Rand123_{res}_mg_mamba_resize_model_aucbest.pt
+  Collected to: insurance_paper_weights/exp2_medgemma/mamba_{res}.pt
+
+  Resolution status (ALL COMPLETE):
+    res  2: [X] COMPLETED -- TEST AUC: 0.5540 (job 10209656)
+    res  4: [X] COMPLETED -- TEST AUC: 0.6053 (job 10209656)
+    res  7: [X] COMPLETED -- TEST AUC: 0.6061 (job 10209656)
+    res 14: [X] COMPLETED -- TEST AUC: 0.6225 (job 10209656)
+    res 28: [X] COMPLETED -- TEST AUC: 0.6368 (job 10209656)
+    res 56: [X] COMPLETED -- TEST AUC: 0.6172 (job 10161337)
+    res112: [X] COMPLETED -- TEST AUC: 0.6253 (job 10161337)
+    res224: [X] COMPLETED -- TEST AUC: 0.6104 (job 10161337)
+
+Exp 3 -- Demographics (image + demo features, 7 combos each)
++----------+----------+----------+----------+---------+----------------------------------------------+
+| Exp      | Model    | Old Job  | Rerun    | Status  | Detail                                       |
++----------+----------+----------+----------+---------+----------------------------------------------+
+| exp3     | Mamba    | 9984764  | 10040216 | [X]     | COMPLETED all 7/7. Weights collected.         |
+|          |          |          |          |         | sexagerace test eval done (job 10118648).      |
+| exp3-1   | DenseNet | 9984765  | --       | [X]     | COMPLETED all 7/7. Weights collected.         |
+| exp3-2   | SwinTF   | 9984766  | 10040218 | [X]     | COMPLETED all 7/7. Weights collected.         |
+|          |          |          |(CANCELD) |         | Job 10118649 COMPLETED 20h31m.                |
+|          |          |          | 10118649 |         | sexagerace ep 69/200 (early stop).             |
+|          |          |          |(COMPLETD)|         | TEST AUC: 0.6455.                             |
++----------+----------+----------+----------+---------+----------------------------------------------+
+  Combos per job: sex, age, race, sexage, sexrace, agerace, sexagerace
+  Weights saved to scratch: /home/sebasmos/orcd/scratch/JAMA_codes_medgemma/{combo}_mg_exp{N}/
+  Collected to: /home/sebasmos/orcd/pool/code/insurance_paper_weights/exp3[-1|-2]_medgemma/{combo}.pt
+
+  All 21/21 models complete (paper-reportable AUC):
+    exp3  Mamba:     sex (0.6480), age (0.6184), race (0.6602),
+                     sexage (0.6462), sexrace (0.6588), agerace (0.6593),
+                     sexagerace (0.6497)
+    exp3-1 DenseNet: sex (0.6896), age (0.6858), race (0.6659),
+                     sexage (0.6786), sexrace (0.6518),
+                     agerace (0.6951), sexagerace (0.6875)
+    exp3-2 SwinTF:   sex (0.6244), age (0.6067), race (0.6574),
+                     sexage (0.6321), sexrace (0.6249), agerace (0.6095),
+                     sexagerace (0.6455)
+
+Exp 4 -- Frequency Filtering (8 freqs x high/low pass)  *** ALL COMPLETE ***
++----------+----------+-----------+----------+----------+---------+----------------------------------------+
+| Exp      | Model    | Direction | Old Job  | Rerun    | Status  | Detail                                 |
++----------+----------+-----------+----------+----------+---------+----------------------------------------+
+| exp4     | Mamba    | highpass  | 9984767  | 10040219 | [X]     | COMPLETED all 8/8.                     |
+| exp4     | Mamba    | lowpass   | 9984768  | --       | [X]     | COMPLETED all 8/8.                     |
+| exp4-1   | SwinTF   | highpass  | 9984769  | 10077723 | [X]     | COMPLETED all 8/8.                     |
+| exp4-1   | SwinTF   | lowpass   | 9984770  | 10077725 | [X]     | COMPLETED all 8/8.                     |
+| exp4-2   | DenseNet | highpass  | 9984771  | --       | [X]     | COMPLETED all 8/8.                     |
+| exp4-2   | DenseNet | lowpass   | 9984772  | --       | [X]     | COMPLETED all 8/8.                     |
++----------+----------+-----------+----------+----------+---------+----------------------------------------+
+  Freqs per job: 1, 5, 10, 25, 50, 100, 200, 400 Hz
+  Collected to: /home/sebasmos/orcd/pool/code/insurance_paper_weights/exp4[-1|-2]_medgemma/{high,low}pass/{freq}Hz.pt
+
+  All 48/48 exp4 models complete (paper-reportable AUC):
+    exp4 Mamba high:     1Hz (0.6254), 5Hz (0.6341), 10Hz (0.6287), 25Hz (0.6069),
+                         50Hz (0.6264), 100Hz (0.6144), 200Hz (0.6103), 400Hz (0.6102)
+    exp4 Mamba low:      1Hz (0.5935), 5Hz (0.5944), 10Hz (0.6079), 25Hz (0.6083),
+                         50Hz (0.6212), 100Hz (0.6435), 200Hz (0.6223), 400Hz (0.6110)
+    exp4-1 SwinTF high:  1Hz (0.6073), 5Hz (0.5173), 10Hz (0.5021), 25Hz (0.4895),
+                         50Hz (0.4874), 100Hz (0.4824), 200Hz (0.5087), 400Hz (0.5024)
+    exp4-1 SwinTF low:   1Hz (0.5548), 5Hz (0.5915), 10Hz (0.6104), 25Hz (0.6120),
+                         50Hz (0.6203), 100Hz (0.6358), 200Hz (0.6200), 400Hz (0.6154)
+    exp4-2 DenseNet high: 1Hz (0.6682), 5Hz (0.6627), 10Hz (0.6510), 25Hz (0.6517),
+                          50Hz (0.6492), 100Hz (0.6329), 200Hz (0.6473), 400Hz (0.6080)
+    exp4-2 DenseNet low:  1Hz (0.5975), 5Hz (0.6047), 10Hz (0.6220), 25Hz (0.6229),
+                          50Hz (0.6491), 100Hz (0.6617), 200Hz (0.6777), 400Hz (0.6773)
+
+  exp2-1 DenseNet resolution AUCs (ALL COMPLETE):
+    res  2: 0.5538.  res  4: 0.6014.  res  7: 0.6038.  res 14: 0.6378.
+    res 28: 0.6469.  res 56: 0.6370.  res112: 0.6639.  res224: 0.6801.
+
+  exp2-2 SwinTF resolution AUCs (ALL COMPLETE):
+    res  4: [X] COMPLETED -- TEST AUC: 0.5577 (early stop ep 33)
+    res  7: [X] COMPLETED -- TEST AUC: 0.5954 (early stop ep 47)
+    res 14: [X] COMPLETED -- TEST AUC: 0.6016 (early stop ep 45)
+    res 28: [X] COMPLETED -- TEST AUC: 0.6320
+    res 56: [X] COMPLETED -- TEST AUC: 0.6324
+    res112: [X] COMPLETED -- TEST AUC: 0.6230 (resumed ep60, early stop, job 10707279)
+    res224: [X] COMPLETED -- TEST AUC: 0.6155 (early stop ep 39, job 10707279)
+
+Training total: 92/92 models done (23/23 exp2 + 21 exp3 + 48 exp4).  *** ALL COMPLETE ***
+
+=== WEIGHT INVENTORY (insurance_paper_weights) ===
+
+exp2_medgemma/     : mamba_2 mamba_4 mamba_7 mamba_14 mamba_28 mamba_56 mamba_112 mamba_224  (8/8)  COMPLETE
+exp2-1_medgemma/   : densenet_2 _4 _7 _14 _28 _56 _112 _224        (8/8)  COMPLETE
+exp2-2_medgemma/   : swinTF_4 _7 _14 _28 _56 _112 _224              (7/7)  COMPLETE
+exp3_medgemma/     : sex age race sexage sexrace agerace sexagerace  (7/7)  COMPLETE
+exp3-1_medgemma/   : sex age race sexage sexrace agerace sexagerace  (7/7)  COMPLETE
+exp3-2_medgemma/   : sex age race sexage sexrace agerace sexagerace  (7/7)  COMPLETE
+exp4_medgemma/hp   : 1 5 10 25 50 100 200 400               (8/8)  COMPLETE
+exp4_medgemma/lp   : 1 5 10 25 50 100 200 400               (8/8)  COMPLETE
+exp4-1_medgemma/hp : 1 5 10 25 50 100 200 400               (8/8)  COMPLETE
+exp4-1_medgemma/lp : 1 5 10 25 50 100 200 400               (8/8)  COMPLETE
+exp4-2_medgemma/hp : 1 5 10 25 50 100 200 400               (8/8)  COMPLETE
+exp4-2_medgemma/lp : 1 5 10 25 50 100 200 400               (8/8)  COMPLETE
+
+Weights collected: 92/92 (all auto-collected by SLURM on completion).  *** ALL COMPLETE ***
+
+=== QUEUE SUMMARY (2026-03-20 ~14:00) ===
+Running:   (none)
+Pending:   (none)
+
+Completed (training):
+  10707279  mg_exp2-2_sw      COMPLETED 10h25m (exp2-2 SwinTF all 7/7 res done, 2026-03-20 06:24)
+  10538978  mg_exp2-1_dn      COMPLETED 13h06m (exp2-1 DenseNet all 8/8 res done, 2026-03-15 02:31)
+  10209656  mg_exp2_mamba     COMPLETED 17h33m (exp2 Mamba rerun 5/5 remaining res done)
+  10161337  mg_exp2_mamba     COMPLETED 3h38m  (exp2 Mamba 3/3 viable res done)
+  10118649  mg_exp3-2_sw      COMPLETED 20h31m (exp3-2 SwinTF all 7/7 done)
+
+Failed/Timeout (fixed & resubmitted):
+  10561425  mg_exp2-2_sw      FAILED 40s (set_device(1) bug, fixed -> 10577589)
+  10577589  mg_exp2-2_sw      CANCELLED 10min (manual cancel -> 10581029)
+  10581029  mg_exp2-2_sw      TIMEOUT 6h (res4 to ep32 -> 10597452)
+  10597452  mg_exp2-2_sw      TIMEOUT 4h (res7 to ep11 -> 10602510 on mit_preemptable 2d)
+  10602510  mg_exp2-2_sw      TIMEOUT 2d (5/7 tested, res112 ep59 ckpt, res224 not started -> 10707279)
+  10620807  mg_bs_e2_sw       CANCELLED (dependency on timed-out 10602510 -> 10707280)
+
+Completed (bootstrap):
+  10284084  mg_bs_exp2_mamba      COMPLETED 9m51s   (exp2 Mamba bootstrap 8/8 res done)
+  10561343  mg_bs_e2_dn           COMPLETED 6m26s   (exp2-1 DenseNet bootstrap 8/8 res done)
+  10156051  mg_bs_exp3_mamba      COMPLETED 5m32s   (exp3 Mamba bootstrap)
+  10156052  mg_bs_exp3_dense      COMPLETED 5m25s   (exp3-1 DenseNet bootstrap)
+  10168498  mg_bs_exp3_swinTF     COMPLETED 6m58s   (exp3-2 SwinTF bootstrap)
+  10156053  mg_bs_e4_mam_hi       COMPLETED 6m51s   (exp4 Mamba highpass bootstrap)
+  10156054  mg_bs_e4_mam_lo       COMPLETED 7m36s   (exp4 Mamba lowpass bootstrap)
+  10156055  mg_bs_e4_swn_hi       COMPLETED 7m07s   (exp4-1 SwinTF highpass bootstrap)
+  10156056  mg_bs_e4_swn_lo       COMPLETED 6m44s   (exp4-1 SwinTF lowpass bootstrap)
+  10156057  mg_bs_e4_dns_hi       COMPLETED 6m42s   (exp4-2 DenseNet highpass bootstrap)
+  10707280  mg_bs_e2_sw            COMPLETED 10m50s  (exp2-2 SwinTF bootstrap 7/7 res done)
+  10156058  mg_bs_e4_dns_lo       COMPLETED 6m47s   (exp4-2 DenseNet lowpass bootstrap)
+
+=== ACTION ITEMS ===
+1. [DONE] Collect exp3 Mamba agerace weight from scratch -> insurance_paper_weights/exp3_medgemma/agerace.pt
+2. [DONE] Collect exp3 Mamba sexagerace weight from scratch -> insurance_paper_weights/exp3_medgemma/sexagerace.pt
+3. [DONE] Collect exp3-2 SwinTF sexage weight from scratch -> insurance_paper_weights/exp3-2_medgemma/sexage.pt
+4. [DONE] Run test eval for exp3 Mamba sexagerace -> job 10118648 COMPLETED (AUC=0.6497).
+5. [DONE] Train exp3-2 SwinTF remaining -> job 10118649 COMPLETED 20h31m.
+     sexrace (0.6249), agerace (0.6095), sexagerace (0.6455). All 7/7 done.
+6. [DONE] exp3-1 DenseNet: all 7/7 complete, weights collected.
+7. [DONE] All exp4 training: 48/48 complete, weights collected.
+8. [DONE] Added skip logic for single combos to run_exp3.py and run_exp3-2.py.
+9. [DONE] Increased time limits to 2 days (partition max) for exp3 Mamba and exp3-2 SwinTF.
+10. [DONE] exp3-2 weights auto-collected: sexrace, agerace, sexagerace (7/7 complete).
+11. [DONE] exp3-2 bootstrap: job 10168498 COMPLETED 6m58s. All 7/7 combos. 14 CSVs.
+12. [DONE] exp2 Mamba training: job 10161337 COMPLETED 3h38m. 3/3 viable res done.
+     res 56 (0.6172), res 112 (0.6253), res 224 (0.6104). Weights collected.
+13. [DONE] Chi-Yu confirmed upscale_to=448 fix. Applied to train_insurance_fullimgsize_mamba.py.
+14. [DONE] exp2 Mamba rerun (5 failed resolutions): job 10209656 COMPLETED 17h33m.
+     res 2 (0.5540), res 4 (0.6053), res 7 (0.6061), res 14 (0.6225), res 28 (0.6368).
+     All 8/8 weights collected to exp2_medgemma/.
+15. [DONE] exp2 Mamba bootstrap (all 8 resolutions): job 10284084 COMPLETED 9m51s.
+     16 CSVs in bootstrap_results/medgemma_exp2/.
+16. [DONE] exp2-1 DenseNet training: job 10538978 COMPLETED 13h06m. All 8/8 done.
+     Weights collected to exp2-1_medgemma/.
+17. [DONE] exp2-2 SwinTF training: job 10707279 COMPLETED 10h25m. All 7/7 res done.
+     res224 TEST AUC: 0.6155 (early stop ep 39). Weights collected to exp2-2_medgemma/.
+18. [DONE] exp2-1 DenseNet bootstrap: job 10561343 COMPLETED 6m26s. 16 CSVs.
+19. [DONE] exp2-2 SwinTF bootstrap: job 10707280 COMPLETED 10m50s. 14 CSVs.
+     (Previous job 10620807 cancelled due to dep on timed-out 10602510, resubmitted as 10707280.)
+
+*** ALL TRAINING AND BOOTSTRAP COMPLETE (92/92 models, 12/12 bootstrap jobs) ***
+
+=== BOOTSTRAP EVALUATION ===
+
+Exp 2 Bootstrap (3h time limit)  *** ALL COMPLETE ***
++----------+----------+---------+------------+----------+
+| Exp      | Model    | Status  | Job ID     | Duration |
++----------+----------+---------+------------+----------+
+| exp2     | Mamba    | [X]     | 10284084   | 9m51s    |
+| exp2-1   | DenseNet | [X]     | 10561343   | 6m26s    |
+| exp2-2   | SwinTF   | [X]     | 10707280   | 10m50s   |
++----------+----------+---------+------------+----------+
+
+Exp 3 Bootstrap (3h time limit)  *** ALL COMPLETE ***
++----------+----------+---------+------------+----------+
+| Exp      | Model    | Status  | Job ID     | Duration |
++----------+----------+---------+------------+----------+
+| exp3     | Mamba    | [X]     | 10156051   | 5m32s    |
+| exp3-1   | DenseNet | [X]     | 10156052   | 5m25s    |
+| exp3-2   | SwinTF   | [X]     | 10168498   | 6m58s    |
++----------+----------+---------+------------+----------+
+
+Exp 4 Bootstrap (3h time limit)  *** ALL COMPLETE ***
++----------+----------+-----------+---------+------------+----------+
+| Exp      | Model    | Direction | Status  | Job ID     | Duration |
++----------+----------+-----------+---------+------------+----------+
+| exp4     | Mamba    | highpass  | [X]     | 10156053   | 6m51s    |
+| exp4     | Mamba    | lowpass   | [X]     | 10156054   | 7m36s    |
+| exp4-1   | SwinTF   | highpass  | [X]     | 10156055   | 7m07s    |
+| exp4-1   | SwinTF   | lowpass   | [X]     | 10156056   | 6m44s    |
+| exp4-2   | DenseNet | highpass  | [X]     | 10156057   | 6m42s    |
+| exp4-2   | DenseNet | lowpass   | [X]     | 10156058   | 6m47s    |
++----------+----------+-----------+---------+------------+----------+
+  Results go to (relative to repo root):
+    bootstrap_results/medgemma_exp2/  (8 res × 3 models = 46 CSVs: mamba 16 + densenet 16 + swinTF 14)
+    bootstrap_results/medgemma_exp3/  (7 combos × 3 models = 42 CSVs: *_summary.csv + *_iterations.csv)
+    bootstrap_results/medgemma_exp4/  (8 freqs × 2 dirs × 3 models = 96 CSVs)
+  Naming: MIMIC_medgemma_{model}_{combo|freqDir|res}_Rand123_bootstrap_{summary|iterations}.csv
+
+Bootstrap total: 12 jobs -> 92 evaluations (n=20, sample=1000)  *** ALL COMPLETE ***
+  Completed: 12/12 (92/92 evals done). All finished in 5-11 min each.
+
+=== HOW TO CHECK ===
+
+Queue status:     squeue -u sebasmos | grep mg_
+Training logs:    tail -f slurm/medgemma/<name>/<name>_<jobid>.log
+Weight check:     ls insurance_paper_weights/exp2_medgemma/
+                  ls insurance_paper_weights/exp3_medgemma/
+                  ls insurance_paper_weights/exp4_medgemma/highpass/
+Scratch status:   find /home/sebasmos/orcd/scratch/JAMA_codes_medgemma/ -name "*STATUS.txt" | xargs grep STATUS
+Scratch weights:  find /home/sebasmos/orcd/scratch/JAMA_codes_medgemma/ -name "*aucbest.pt"
+
+=== STATUS KEY ===
+[ ] = not started / pending
+[R] = running
+[X] = done
+[!] = timed out / needs rerun (partial results saved)
+
+=== POST-COMPLETION FIX LOG (2026-04-04) ===
+
+Bug discovered: MedGemma exp2 Mamba res56 and res112 — degenerate collapse.
+  Symptoms: AUC ~0.536/0.559, precision frozen at 0.2716, recall fixed at 0.5.
+            Model always predicted positive class.
+  Bootstrap CSVs (job 10284084): res56 Overall AUC=0.5360, res112 AUC=0.5586 — INVALID.
+
+Root cause (confirmed via git history):
+  The broken original runs (job 10161337) completed 2026-03-07.
+  The upscale_to=448 pipeline was added in commit 2d21b9f on 2026-03-08 (one day later).
+  Those runs fed native 56×56 and 112×112 images directly to MedMamba without upscaling.
+  At res56: feature map reaches 14×14 → 7×7 (odd) with C=192 at PatchMerging2D stage 2.
+  At res112: feature map reaches 28×28 → 14×14 → 7×7 (odd) with C=384 at stage 3.
+  Original PatchMerging2D used SHAPE_FIX: truncated odd H/W by dropping last row/col,
+  causing catastrophic information loss and degenerate training.
+
+Fix applied to MedMamba/MedMamba.py (PatchMerging2D.forward):
+  Replaced SHAPE_FIX truncation with zero-padding (F.pad) to even dimensions.
+  This is the standard Swin Transformer approach and is lossless.
+
+Retraining:
+  Deleted broken weights before resubmit to bypass is_experiment_completed() check.
+  Submitted mg_exp2_mamba_fix56_112.sh → SLURM job 11368030 (training).
+  Job preempted/requeued; weights copied to shared path mismatch discovered:
+    Training wrote to: /home/sebasmos/orcd/pool/code/insurance_paper_weights/exp2_medgemma/
+    Bootstrap reads from: /orcd/pool/006/lceli_shared/weights/insurance_paper_weights/exp2_medgemma/
+  Fix: copied mamba_56.pt and mamba_112.pt to shared path.
+  Final training job: 11371089 — completed 2026-04-04 ~03:43.
+    res56  test AUC: 0.6276 (epoch 24 best)
+    res112 test AUC: ~0.652 (epoch best)
+
+Bootstrap re-run:
+  Submitted mg_exp2_bootstrap_mamba_fix56_112.sh → SLURM job 11378422.
+  Completed 2026-04-04 ~04:01.
+  Final bootstrap results (n=20, sample_size=1000):
+    res56:  AUC = 0.6255, CI [0.588–0.656]
+    res112: AUC = 0.6086, CI [0.582–0.630]
+  CSVs updated:
+    bootstrap_results/medgemma_exp2/MIMIC_medgemma_mamba_res56_Rand123_bootstrap_summary.csv
+    bootstrap_results/medgemma_exp2/MIMIC_medgemma_mamba_res112_Rand123_bootstrap_summary.csv
+
+GitHub Issue #2 closed: altis5526/Insurance-Project-Journal-version-#2
+README.md updated: Known Issues table → FIXED (Apr 4, 2026).
+mg_exp4-2_densenet_high verified: AUCs 0.667–0.607 across all 8 frequencies — no collapse.
+
+=== POST-COMPLETION THRESHOLD SWEEP (2026-04-06) ===
+
+Finding: mg_exp4-1_swinTF_high collapse threshold — diameters 2, 3, 4 sweep.
+  Background: Original exp4-1 showed collapse at diameter ≥5 (AUC ~0.49–0.51).
+  Question: At which diameter exactly does collapse occur? Is it 2, 3, or 4?
+
+Training (job 11412774, mg_exp41_s_hp34, node4403, ~22h):
+  Diameter 2: recovered from timed-out job 11379089 — weight manually copied from scratch.
+              Final test AUC: 0.6277 (epoch 46 best when killed; STATUS RUNNING — weight saved)
+  Diameter 3: STOPPED_EARLY at epoch 35. Best val AUC=0.552, test AUC=0.5428
+  Diameter 4: STOPPED_EARLY at epoch 16. Best val AUC=0.541, test AUC=0.4963
+
+Bootstrap (job 11412780, mg_bs_e4_swn_hi234, node4200, ~42min):
+  Completed 2026-04-06 06:32. All 3 frequencies bootstrapped (n=20, sample=1000).
+  Results:
+    Diameter 2: AUC = 0.601, CI [0.579, 0.625]  — healthy learning
+    Diameter 3: AUC = 0.547, CI [0.526, 0.578]  — degraded but above chance
+    Diameter 4: AUC = 0.502, CI [0.469, 0.540]  — collapsed (CI spans 0.5)
+
+FINDING: Collapse threshold is between diameter 3 and diameter 4.
+  d1=0.608 → d2=0.601 → d3=0.547 → d4=0.502 → d5=0.514 → ... → d400=0.505
+  Gradual degradation d1→d3, sharp collapse at d4.
+  d4 CI [0.469, 0.540] overlaps chance (0.5) — statistically indistinguishable from random.
+
+Bootstrap CSVs:
+  bootstrap_results/medgemma_exp4/MIMIC_medgemma_swinTF_2HighPass_Rand123_bootstrap_summary.csv
+  bootstrap_results/medgemma_exp4/MIMIC_medgemma_swinTF_3HighPass_Rand123_bootstrap_summary.csv
+  bootstrap_results/medgemma_exp4/MIMIC_medgemma_swinTF_4HighPass_Rand123_bootstrap_summary.csv
+
+README.md updated: Known Issues table → RESOLVED (Apr 6, 2026).
+GitHub Issue #1: altis5526/Insurance-Project-Journal-version-#1 (comment added with threshold results).

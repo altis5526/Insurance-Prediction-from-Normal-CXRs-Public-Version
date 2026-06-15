@@ -1,0 +1,5 @@
+embeddings/
+checkpoints/
+*.pdf
+__pycache__/
+.ipynb_checkpoints/

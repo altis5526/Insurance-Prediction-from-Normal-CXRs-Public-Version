@@ -1,0 +1,2 @@
+experiment_A,experiment_B,n_pairs,mean_delta,std_delta,shapiro_p,delta_normal,t_stat,t_p,t_significant,wilcoxon_stat,wilcoxon_p,wilcoxon_significant,recommended_test
+“densenet”,“denset_female”,20,-0.051663,0.069359,0.459939,True,-3.246776,0.004244,True,38.0,0.010689,True,t-test
