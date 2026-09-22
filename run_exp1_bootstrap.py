@@ -12,7 +12,7 @@ Usage:
     python run_exp1_bootstrap.py \
         --model mamba --method remove \
         --test_path insurance_dataset_8_1_1_PMMthree_test_no_support_devices.csv \
-        --n_bootstrap 20 --sample_size 1000 --seed 42 --train_seed 123
+        --n_bootstrap 1000 --seed 42 --train_seed 123
 """
 
 import subprocess
@@ -24,11 +24,11 @@ HF_WEIGHTS = "/mnt/new_usb/jupyter-altis5526/insurance_paper_weights"
 # All weight paths use HF repo with clean naming: patch{idx}.pt
 WEIGHT_CONFIGS = {
     ("mamba", "remove"): {
-        "absolute_dir": f"{HF_WEIGHTS}/exp1-1_medgemma/mamba_remove",
+        "absolute_dir": f"{HF_WEIGHTS}/exp1-1_medgemma_s_fix/mamba_remove",
         "filename_template": "patch{idx}.pt",
     },
     ("mamba", "keep"): {
-        "absolute_dir": f"{HF_WEIGHTS}/exp1-1_medgemma/mamba_keep",
+        "absolute_dir": f"{HF_WEIGHTS}/exp1-1_medgemma_s_fix/mamba_keep",
         "filename_template": "patch{idx}.pt",
     },
     ("densenet", "keep"): {
@@ -68,8 +68,9 @@ if __name__ == "__main__":
     parser.add_argument("--test_path", type=str, required=True)
     parser.add_argument("--root_dir", type=str,
                         default="/mnt/new_usb/jupyter-altis5526/new_insurancetype_weight/MedGemma_checked/")
-    parser.add_argument("--n_bootstrap", type=int, default=20)
-    parser.add_argument("--sample_size", type=int, default=1000)
+    parser.add_argument("--n_bootstrap", type=int, default=1000)
+    parser.add_argument("--sample_size", type=int, default=None,
+                        help="Resample size; defaults to the full test set size N")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--train_seed", type=int, default=123)
     parser.add_argument("--output_dir", type=str, default="bootstrap_results/exp1")
@@ -112,7 +113,7 @@ if __name__ == "__main__":
             f" --preprocessing {preprocessing}"
             f" --patch_idx {patch_idx}"
             f" --n_bootstrap {args.n_bootstrap}"
-            f" --sample_size {args.sample_size}"
+            f"{f' --sample_size {args.sample_size}' if args.sample_size is not None else ''}"
             f" --seed {args.seed}"
             f" --output_dir {args.output_dir}"
             f" --experiment_name {experiment_name}"

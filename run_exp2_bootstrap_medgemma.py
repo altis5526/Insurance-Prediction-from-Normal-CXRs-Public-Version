@@ -12,7 +12,7 @@ Usage:
     python run_exp2_bootstrap_medgemma.py \
         --model mamba \
         --test_path /orcd/pool/006/lceli_shared/data/mimic-cxr-gemma/insurance_dataset_8_1_1_PMMthree_test_medgemmaChecked.csv \
-        --n_bootstrap 20 --sample_size 1000 --seed 42
+        --n_bootstrap 1000 --seed 42
 """
 
 import subprocess
@@ -23,7 +23,7 @@ HF_WEIGHTS = "/mnt/new_usb/jupyter-altis5526/insurance_paper_weights"
 
 WEIGHT_CONFIGS = {
     "mamba": {
-        "weight_dir": os.path.join(HF_WEIGHTS, "exp2_medgemma"),
+        "weight_dir": os.path.join(HF_WEIGHTS, "exp2_medgemma_s_fix"),
         "filename_template": "mamba_{res}.pt",
         "resolutions": [2, 4, 7, 14, 28, 56, 112, 224],
     },
@@ -47,8 +47,9 @@ if __name__ == "__main__":
     parser.add_argument("--model", type=str, required=True,
                         choices=["mamba", "densenet", "swinTF"])
     parser.add_argument("--test_path", type=str, required=True)
-    parser.add_argument("--n_bootstrap", type=int, default=20)
-    parser.add_argument("--sample_size", type=int, default=1000)
+    parser.add_argument("--n_bootstrap", type=int, default=1000)
+    parser.add_argument("--sample_size", type=int, default=None,
+                        help="Resample size; defaults to the full test set size N")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--output_dir", type=str, default="bootstrap_results/medgemma_exp2")
     parser.add_argument("--num_workers", type=int, default=4)
@@ -84,7 +85,7 @@ if __name__ == "__main__":
             f" --weight_path {weight_path}"
             f" --resize {res}"
             f" --n_bootstrap {args.n_bootstrap}"
-            f" --sample_size {args.sample_size}"
+            f"{f' --sample_size {args.sample_size}' if args.sample_size is not None else ''}"
             f" --seed {args.seed}"
             f" --output_dir {args.output_dir}"
             f" --experiment_name {experiment_name}"

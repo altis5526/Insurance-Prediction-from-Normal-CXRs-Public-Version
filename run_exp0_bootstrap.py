@@ -27,8 +27,9 @@ if __name__ == "__main__":
     parser.add_argument("--experiment_name", type=str, required=True)
     parser.add_argument("--weight_dir", type=str, required=True)
     parser.add_argument("--root_dir", type=str, default="/mnt/new_usb/jupyter-altis5526/insurance_paper_weights")
-    parser.add_argument("--n_bootstrap", type=int, default=20)
-    parser.add_argument("--sample_size", type=int, default=1000)
+    parser.add_argument("--n_bootstrap", type=int, default=1000)
+    parser.add_argument("--sample_size", type=int, default=None,
+                        help="Resample size; defaults to the full test set size N")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--train_seed", type=int, default=123,
                         help="Seed used during training (for weight path construction)")
@@ -74,7 +75,7 @@ if __name__ == "__main__":
         f" --test_path {args.test_path}"
         f" --weight_path {weight_path}"
         f" --n_bootstrap {args.n_bootstrap}"
-        f" --sample_size {args.sample_size}"
+        f"{f' --sample_size {args.sample_size}' if args.sample_size is not None else ''}"
         f" --seed {args.seed}"
         f" --output_dir {args.output_dir}"
         f" --experiment_name {output_experiment_name}"

@@ -1,8 +1,21 @@
 """
 Bootstrap evaluation for insurance classification experiments.
 
-Runs model inference on the full test set once, then bootstrap-resamples
-predictions to compute confidence intervals for metrics.
+Runs model inference on the full test set once, reports metrics on the entire
+test set, then bootstrap-resamples predictions to compute confidence intervals.
+
+Bootstrapping defaults to resampling PATIENTS with replacement (cluster
+bootstrap), not images: images from the same patient are correlated, so
+image-level resampling understates the true uncertainty. All images of a drawn
+patient enter the resample together. --sample_size defaults to the full test
+set size N, so the CI describes the study you actually ran; passing a smaller
+value gives an m-out-of-n bootstrap whose CI is wider by roughly sqrt(N/m).
+
+Outputs written to --output_dir (prefixed with --experiment_name):
+- <name>_predictions.csv          per-sample logits, probabilities, labels, demographics
+- <name>_full_test_metrics.csv    metrics on the entire test set (overall + subgroups)
+- <name>_bootstrap_iterations.csv per-bootstrap-iteration metrics
+- <name>_bootstrap_summary.csv    bootstrap mean/std/95% CI
 
 Supports:
 - Base models (image-only): densenet, mamba, swinTF
@@ -194,13 +207,14 @@ def _build_demo_tensor(batch, demo_labels, device):
 
 
 def collect_predictions_mimic(model, dataloader, device, model_variant="base", demo_labels=None):
-    """Run inference on MIMIC dataset, collect predictions + demographics."""
+    """Run inference on MIMIC dataset, collect predictions + demographics + ids."""
     model.eval()
     all_preds = []
     all_labels = []
     all_gender = []
     all_age = []
     all_race = []
+    all_ids = []
 
     with torch.no_grad():
         for batch in dataloader:
@@ -221,26 +235,38 @@ def collect_predictions_mimic(model, dataloader, device, model_variant="base", d
             all_age.append(age_idx)
             all_race.append(race_idx)
 
+            img_id = batch.get("img_id")
+            if img_id is not None:
+                all_ids.extend([str(x) for x in img_id])
+
     return (
         torch.cat(all_preds),
         torch.cat(all_labels),
         torch.cat(all_gender).long(),
         torch.cat(all_age).long(),
         torch.cat(all_race).long(),
+        all_ids,
     )
 
 
 def collect_predictions_chexpert(model, dataloader, device):
-    """Run inference on CheXpert dataset, collect predictions + demographics."""
+    """Run inference on CheXpert dataset, collect predictions + demographics + patients."""
     model.eval()
     all_preds = []
     all_labels = []
     all_gender = []
     all_age = []
     all_race = []
+    all_patients = []
 
     with torch.no_grad():
-        for (imgs, labels, age, sex, race) in dataloader:
+        for batch in dataloader:
+            # loader yields (imgs, labels, age, sex, race[, patient]) depending on return_patient
+            if len(batch) == 6:
+                imgs, labels, age, sex, race, patient = batch
+                all_patients.extend([str(int(x)) for x in patient])
+            else:
+                imgs, labels, age, sex, race = batch
             imgs = imgs.to(device)
             labels = labels.to(device).squeeze(-1)
 
@@ -267,7 +293,10 @@ def collect_predictions_chexpert(model, dataloader, device):
     gender_cat = torch.cat(all_gender).long().squeeze()
     age_cat = torch.cat(all_age).long().squeeze()
     race_cat = torch.cat(all_race).long().squeeze()
-    return preds_cat, labels_cat, gender_cat, age_cat, race_cat
+    # CheXpert loader yields no per-sample identifier; fall back to row order
+    ids = [str(i) for i in range(len(preds_cat))]
+    patients = all_patients if len(all_patients) == len(preds_cat) else None
+    return preds_cat, labels_cat, gender_cat, age_cat, race_cat, ids, patients
 
 
 def compute_metrics(preds, labels, num_classes, device):
@@ -319,6 +348,189 @@ SUBGROUPS = {
 }
 
 
+def evaluate_full_dataset(
+    all_preds,
+    all_labels,
+    all_gender,
+    all_age,
+    all_race,
+    num_classes,
+    device,
+):
+    """Compute metrics on the entire test set (no resampling), overall + per subgroup."""
+    results = []
+
+    metrics = compute_metrics(all_preds, all_labels, num_classes, device)
+    metrics["group"] = "Overall"
+    metrics["N"] = int(len(all_preds))
+    results.append(metrics)
+
+    demo_tensors = {
+        "Gender": all_gender,
+        "Age": all_age,
+        "Race": all_race,
+    }
+    for group_name, label_map in SUBGROUPS.items():
+        demo = demo_tensors[group_name]
+        for val, val_name in label_map.items():
+            mask = demo == val
+            n = int(mask.sum())
+            if n < 10:
+                continue
+            sub_metrics = compute_metrics(
+                all_preds[mask],
+                all_labels[mask],
+                num_classes,
+                device,
+            )
+            sub_metrics["group"] = f"{group_name}: {val_name}"
+            sub_metrics["N"] = n
+            results.append(sub_metrics)
+
+    return results
+
+
+def print_full_results(full_results):
+    """Print formatted metrics table for the entire test set."""
+    print(f"\n{'=' * 80}")
+    print("Full Test Set Results (no resampling)")
+    print(f"{'=' * 80}")
+
+    metrics = ["AUC", "Precision", "Recall", "F1", "Accuracy"]
+    header = f"{'Group':<22} | {'N':>7} | " + " | ".join(f"{m:>9}" for m in metrics)
+    print(header)
+    print("-" * len(header))
+    for row in full_results:
+        values = " | ".join(f"{row[m]:>9.4f}" for m in metrics)
+        print(f"{row['group']:<22} | {row['N']:>7} | {values}")
+
+
+def save_full_results(full_results, output_dir, experiment_name):
+    """Save whole-test-set metrics to CSV."""
+    os.makedirs(output_dir, exist_ok=True)
+    path = os.path.join(output_dir, f"{experiment_name}_full_test_metrics.csv")
+    fieldnames = ["group", "N", "AUC", "Precision", "Recall", "F1", "Accuracy"]
+    with open(path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for r in full_results:
+            writer.writerow({k: r[k] for k in fieldnames})
+    print(f"\nFull test set metrics saved to: {path}")
+    return path
+
+
+def save_predictions(
+    all_preds,
+    all_labels,
+    all_gender,
+    all_age,
+    all_race,
+    all_ids,
+    output_dir,
+    experiment_name,
+    all_patients=None,
+):
+    """Save per-sample predictions (logits, probabilities, labels, demographics) to CSV."""
+    os.makedirs(output_dir, exist_ok=True)
+    path = os.path.join(output_dir, f"{experiment_name}_predictions.csv")
+
+    preds = all_preds.detach().cpu().float()
+    probs = torch.softmax(preds, dim=1)
+    pred_idx = torch.argmax(preds, dim=1)
+    _, target_idx = torch.max(all_labels.detach().cpu(), 1)
+
+    gender = all_gender.detach().cpu()
+    age = all_age.detach().cpu()
+    race = all_race.detach().cpu()
+
+    num_classes = preds.shape[1]
+    fieldnames = (
+        ["sample_id", "patient_id", "true_label", "pred_label", "correct"]
+        + [f"logit_{c}" for c in range(num_classes)]
+        + [f"prob_{c}" for c in range(num_classes)]
+        + ["gender", "age", "race", "gender_name", "age_name", "race_name"]
+    )
+
+    with open(path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for i in range(len(preds)):
+            g = int(gender[i])
+            a = int(age[i])
+            r = int(race[i])
+            row = {
+                "sample_id": all_ids[i] if i < len(all_ids) else i,
+                "patient_id": all_patients[i] if all_patients is not None else "",
+                "true_label": int(target_idx[i]),
+                "pred_label": int(pred_idx[i]),
+                "correct": int(pred_idx[i] == target_idx[i]),
+                "gender": g,
+                "age": a,
+                "race": r,
+                "gender_name": SUBGROUPS["Gender"].get(g, "Unknown"),
+                "age_name": SUBGROUPS["Age"].get(a, "Unknown"),
+                "race_name": SUBGROUPS["Race"].get(r, "Unknown"),
+            }
+            for c in range(num_classes):
+                row[f"logit_{c}"] = float(preds[i, c])
+                row[f"prob_{c}"] = float(probs[i, c])
+            writer.writerow(row)
+
+    print(f"Per-sample predictions saved to: {path}")
+    return path
+
+
+def load_patient_ids(test_path, all_ids):
+    """Map each collected sample id (dicom_id) to its patient id from the test CSV.
+
+    Returns None if the CSV has no usable patient column or any sample is missing,
+    so the caller can fall back to image-level resampling instead of guessing.
+    """
+    try:
+        with open(test_path, newline="") as f:
+            reader = csv.reader(f)
+            header = next(reader)
+            rows = [r for r in reader if r]
+    except OSError as e:
+        print(f"WARNING: could not read {test_path} for patient ids ({e})")
+        return None
+
+    subj_col = None
+    for name in ("subject_id_x", "subject_id", "subject_idx"):
+        if name in header:
+            subj_col = header.index(name)
+            break
+    if subj_col is None:
+        # RawImageDataset builds the image path from column 1, which is the subject id
+        subj_col = 1
+    if subj_col >= len(header):
+        print("WARNING: no patient id column found in test CSV")
+        return None
+
+    mapping = {row[0]: row[subj_col] for row in rows}
+    patients = [mapping.get(sample_id) for sample_id in all_ids]
+    n_missing = sum(1 for p in patients if p is None)
+    if n_missing:
+        print(
+            f"WARNING: {n_missing}/{len(patients)} samples had no patient id in "
+            f"{test_path}; falling back to image-level resampling"
+        )
+        return None
+    return patients
+
+
+def build_clusters(cluster_labels):
+    """Group sample positions by cluster label, preserving first-seen order."""
+    members = {}
+    order = []
+    for pos, label in enumerate(cluster_labels):
+        if label not in members:
+            members[label] = []
+            order.append(label)
+        members[label].append(pos)
+    return [np.array(members[label], dtype=np.int64) for label in order]
+
+
 def bootstrap_evaluate(
     all_preds,
     all_labels,
@@ -330,15 +542,34 @@ def bootstrap_evaluate(
     n_bootstrap,
     sample_size,
     seed,
+    clusters=None,
 ):
-    """Run bootstrap resampling and compute metrics per iteration."""
+    """Run bootstrap resampling and compute metrics per iteration.
+
+    If `clusters` is given (a list of index arrays, one per patient), whole
+    patients are resampled with replacement and all their images come along —
+    the cluster bootstrap, which respects the correlation between images of the
+    same patient. Otherwise individual images are resampled.
+    """
     N = len(all_preds)
     rng = np.random.RandomState(seed)
+
+    n_draw = None
+    if clusters is not None:
+        n_clusters = len(clusters)
+        # Draw the observed number of patients; scale down proportionally if the
+        # caller asked for a smaller-than-full resample.
+        frac = min(sample_size, N) / N
+        n_draw = max(1, int(round(n_clusters * frac)))
 
     all_results = []
 
     for i in range(n_bootstrap):
-        indices = rng.choice(N, size=min(sample_size, N), replace=True)
+        if clusters is not None:
+            picked = rng.choice(len(clusters), size=n_draw, replace=True)
+            indices = np.concatenate([clusters[c] for c in picked])
+        else:
+            indices = rng.choice(N, size=min(sample_size, N), replace=True)
         indices_t = torch.tensor(indices)
 
         preds_sample = all_preds[indices_t]
@@ -409,10 +640,14 @@ def summarize_results(all_results):
     return summary
 
 
-def print_summary(summary, n_bootstrap, sample_size):
+def print_summary(summary, n_bootstrap, sample_size, unit="image", n_clusters=None):
     """Print formatted summary table."""
     print(f"\n{'=' * 80}")
     print(f"Bootstrap Validation Results (N={n_bootstrap}, sample_size={sample_size})")
+    if unit == "patient":
+        print(f"Resampling unit: patient ({n_clusters} patients drawn per iteration)")
+    else:
+        print("Resampling unit: image")
     print(f"{'=' * 80}")
 
     metrics = ["AUC", "Precision", "Recall", "F1", "Accuracy"]
@@ -499,8 +734,10 @@ if __name__ == "__main__":
     parser.add_argument("--model", type=str, required=True, choices=["densenet", "mamba", "swinTF"])
     parser.add_argument("--test_path", type=str, required=True)
     parser.add_argument("--weight_path", type=str, required=True)
-    parser.add_argument("--n_bootstrap", type=int, default=20)
-    parser.add_argument("--sample_size", type=int, default=1000)
+    parser.add_argument("--n_bootstrap", type=int, default=1000)
+    parser.add_argument("--sample_size", type=int, default=None,
+                        help="Resample size; defaults to the full test set size N. "
+                             "Smaller values give an m-out-of-n bootstrap with wider CIs.")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--output_dir", type=str, default="bootstrap_results")
     parser.add_argument("--experiment_name", type=str, default="bootstrap")
@@ -521,6 +758,12 @@ if __name__ == "__main__":
                         help="DataLoader num_workers (0 for main-process loading)")
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--random_label", type=bool, default=False)
+    parser.add_argument("--no_save_predictions", action="store_true",
+                        help="Skip writing the per-sample predictions CSV")
+    parser.add_argument("--bootstrap_unit", type=str, default="patient",
+                        choices=["patient", "image"],
+                        help="Resample whole patients (default, correct for repeated "
+                             "images per patient) or individual images (legacy)")
     args = parser.parse_args()
 
     # Validation
@@ -553,7 +796,9 @@ if __name__ == "__main__":
             extra += f" diameter={args.filter_diameter}"
         print(f"Preprocessing: {args.preprocessing}{extra}")
     print(f"Weight path: {args.weight_path}")
-    print(f"Bootstrap: N={args.n_bootstrap}, sample_size={args.sample_size}, seed={args.seed}")
+    ss_desc = "full test set" if args.sample_size is None else args.sample_size
+    print(f"Bootstrap: N={args.n_bootstrap}, sample_size={ss_desc}, "
+          f"unit={args.bootstrap_unit}, seed={args.seed}")
     print(f"Device: {device}")
 
     # Load model and weights
@@ -587,23 +832,80 @@ if __name__ == "__main__":
         )
         print(f"Test set size: {len(test_dataset)}")
         print("Running full inference on test set...")
-        all_preds, all_labels, all_gender, all_age, all_race = (
+        all_preds, all_labels, all_gender, all_age, all_race, all_ids = (
             collect_predictions_mimic(
                 model, test_loader, device,
                 model_variant=args.model_variant,
                 demo_labels=args.demo_labels,
             )
         )
+        all_patients = load_patient_ids(args.test_path, all_ids)
     elif args.dataset == "CheXpert":
         test_loader = CheXpertLoader(
-            args.test_path, None, batch_size, num_workers=1, dataset_type="test"
+            args.test_path, None, batch_size, num_workers=1, shuffle=False,
+            return_patient=True,
         )
         print("Running full inference on CheXpert test set...")
-        all_preds, all_labels, all_gender, all_age, all_race = (
+        all_preds, all_labels, all_gender, all_age, all_race, all_ids, all_patients = (
             collect_predictions_chexpert(model, test_loader, device)
         )
 
     print(f"Collected {len(all_preds)} predictions")
+
+    N = len(all_preds)
+    if args.sample_size is None:
+        args.sample_size = N
+        print(f"sample_size not given; using the full test set (N={N})")
+    elif args.sample_size < N:
+        print(
+            f"WARNING: sample_size={args.sample_size} < N={N}: this is an "
+            f"m-out-of-n bootstrap, CIs are ~{(N / args.sample_size) ** 0.5:.2f}x "
+            f"wider than for the full test set"
+        )
+
+    # Patient-level (cluster) resampling unless asked otherwise or ids unavailable
+    clusters = None
+    if args.bootstrap_unit == "patient":
+        if all_patients is None:
+            print(
+                "WARNING: no patient ids available for this dataset; "
+                "falling back to image-level resampling"
+            )
+        else:
+            clusters = build_clusters(all_patients)
+            sizes = np.array([len(c) for c in clusters])
+            print(
+                f"Patient-level bootstrap: {len(clusters)} patients, "
+                f"{N} images, max {sizes.max()} images/patient, "
+                f"{int((sizes > 1).sum())} patients with >1 image"
+            )
+
+    # Save every prediction from the full test set
+    if not args.no_save_predictions:
+        save_predictions(
+            all_preds,
+            all_labels,
+            all_gender,
+            all_age,
+            all_race,
+            all_ids,
+            args.output_dir,
+            args.experiment_name,
+            all_patients=all_patients,
+        )
+
+    # Metrics on the entire test set (point estimates, no resampling)
+    full_results = evaluate_full_dataset(
+        all_preds,
+        all_labels,
+        all_gender,
+        all_age,
+        all_race,
+        num_classes,
+        device,
+    )
+    print_full_results(full_results)
+    save_full_results(full_results, args.output_dir, args.experiment_name)
 
     # Run bootstrap
     print(f"\nRunning {args.n_bootstrap} bootstrap iterations...")
@@ -618,9 +920,16 @@ if __name__ == "__main__":
         args.n_bootstrap,
         args.sample_size,
         args.seed,
+        clusters=clusters,
     )
 
     # Summarize and output
     summary = summarize_results(all_results)
-    print_summary(summary, args.n_bootstrap, args.sample_size)
+    print_summary(
+        summary,
+        args.n_bootstrap,
+        args.sample_size,
+        unit="patient" if clusters is not None else "image",
+        n_clusters=len(clusters) if clusters is not None else None,
+    )
     save_results(all_results, summary, args.output_dir, args.experiment_name)
