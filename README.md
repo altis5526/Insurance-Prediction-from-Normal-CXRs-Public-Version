@@ -1,7 +1,7 @@
 
 # Predicting-Insurance-Type-from-Normal-Chest-Xrays
 
-**Pretrained Weights:** [InsurancePrediction/insurance_paper_weights](https://huggingface.co/InsurancePrediction/insurance_paper_weights)
+**Pretrained Weights:** [InsurancePrediction/insurance_public_weights](https://huggingface.co/InsurancePrediction/insurance_public_weights)
 
 ---
 
@@ -435,12 +435,12 @@ By default these wrappers write to `bootstrap_results/medgemma_exp{2,3,4}/` (cre
 
 ## Pretrained Weights
 
-All pretrained checkpoints are available on Hugging Face: **[InsurancePrediction/insurance_paper_weights](https://huggingface.co/InsurancePrediction/insurance_paper_weights)** (seed = 123).
+All pretrained checkpoints are available on Hugging Face: **[InsurancePrediction/insurance_public_weights](https://huggingface.co/InsurancePrediction/insurance_public_weights)** (seed = 123).
 
 ```bash
 # Download all weights
 git lfs install
-git clone https://huggingface.co/InsurancePrediction/insurance_paper_weights
+git clone https://huggingface.co/InsurancePrediction/insurance_public_weights
 ```
 ```python
 # Download a single experiment
